@@ -1,0 +1,16 @@
+#ambiente virtual
+*venv/
+*.venv/
+*ENV/
+*.VENV/
+
+# Cache de Python
+*__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Pytest
+*.pytest_cache/
+
+*.env
