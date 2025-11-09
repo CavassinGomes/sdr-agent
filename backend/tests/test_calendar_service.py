@@ -6,6 +6,7 @@ from services.calendar_service import get_available_slots_next_7_days, schedule_
 @pytest.mark.asyncio
 async def test_get_available_slots_next_7_days():
     slots = await get_available_slots_next_7_days()
+    print("\nAvailable Slots:", slots)
     assert isinstance(slots, list)
     assert all('time' in s for s in slots)
 

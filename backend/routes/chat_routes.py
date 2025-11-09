@@ -1,22 +1,32 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Any, List
-from utils.session_manager import create_session, get_session, add_message
-from models.lead import Lead
-from models.db import upsert_lead_db, get_lead_by_email
-from services import openai_service, pipefy_service, calendar_service
-from config import settings
+from typing import Any, List, Dict
+from utils.session_manager import create_session, get_session, add_message, end_session, update_lead_info
+from services import ai_service, pipefy_service, calendar_service
+from google.genai import types
 import json
 
 router = APIRouter()
 
 class StartResponse(BaseModel):
     session_id: str
+    messages: str
 
-@router.post('/start-session', response_model=StartResponse)
+@router.post("/start-session", response_model=StartResponse)
 async def start_session():
     sid = create_session()
-    return {"session_id": sid}
+    
+    init_prompt = ai_service.system_prompt_for_agent("Sistema de CRM e gestão comercial")
+    
+    ai_response = await ai_service.chat_with_ai(
+        messages=[{"role": "system", "content": init_prompt}],
+        system_instructions=init_prompt
+    )
+    
+    return {
+        "session_id": sid,
+        "messages": ai_response.get("reply", "")
+    }
 
 class UserMessageIn(BaseModel):
     session_id: str
@@ -25,103 +35,177 @@ class UserMessageIn(BaseModel):
 class AssistantOut(BaseModel):
     reply: str
     actions: List[dict] | None = None
-
-
-def build_messages(history: list, product_desc: str = "Product/Service description placeholder"):
-    sys = {"role": "system", "content": openai_service.system_prompt_for_agent(product_desc)}
-    return [sys] + history
-
-
-@router.post('/message', response_model=AssistantOut)
-async def message_endpoint(payload: UserMessageIn):
-    session = get_session(payload.session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found or expired")
     
-    add_message(payload.session_id, {"role": "user", "content": payload.message})
-    messages = build_messages(session['messages'])
+PRODUCT_DESCRIPTION = "Nossa solução é um software de gestão de equipes de alta performance que integra comunicação, tarefas e análise de produtividade em uma única plataforma."
 
-    functions = [
+def build_message(history: List[Dict[str, Any]]):
+    system_instructions = ai_service.system_prompt_for_agent(PRODUCT_DESCRIPTION)
+    
+    return history, system_instructions
+
+def get_gemini_functions_schema() -> List[Dict[str, Any]]:
+    return [
         {
-            "name": "registrarLead",
-            "description": "Register or update a lead in Pipefy and DB",
+            "name": "create_or_update_card_pipefy",
+            "description": "Cria/atualiza um card de Lead no Pipefy com as informações coletadas (nome, email, empresa, necessidade, interesse_confirmado, meeting_link). Esta função deve ser chamada quando o cliente confirmar interesse ou quando a conversa for finalizada sem interesse, e devera ser utilizada para atualizar o meeting_link assim que confirmada a reunião.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "nome": {"type": "string"},
-                    "email": {"type": "string"},
-                    "empresa": {"type": "string"},
-                    "necessidade": {"type": "string"},
-                    "interesse_confirmado": {"type": "boolean"},
-                    "meeting_link": {"type": ["string", "null"]},
-                    "meeting_datetime": {"type": ["string", "null"]}
+                    "lead": {"type": "object", "description": "Um dicionário contendo informações do lead: 'nome', 'email', 'empresa', 'necessidade', 'prazo', 'interesse_confirmado', 'meeting_link'."},
                 },
-                "required": ["nome", "email"]
-            }
+                "required": ["lead"],
+            },
+        },
+       {
+            "name": "get_available_slots_next_7_days",
+            "description": "Busca os horários disponíveis para agendamento de reuniões nos próximos 7 dias. Use esta função apenas quando o usuário confirmar explicitamente o interesse.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
         },
         {
-            "name": "oferecerHorarios",
-            "description": "Return 2-3 available scheduling slots from the calendar provider",
-            "parameters": {"type": "object", "properties": {}, "required": []}
-        },
-            {
-                "name": "agendarReuniao",
-                "description": "Schedule a meeting in the calendar provider using provided slot and lead",
-                "parameters": {
+            "name": "schedule_meeting",
+            "description": "Agenda uma reunião de pré-vendas. Deve ser chamada imediatamente após o usuário confirmar o interesse e escolher um slot de horário. Garanta que o 'slot' e 'lead' tenham todas as informações necessárias antes de chamar.",
+            "parameters": {
                 "type": "object",
                 "properties": {
-                    "slot": {"type": "object"},
-                    "lead": {"type": "object"}
+                    "slot": {"type": "object", "description": "O objeto do slot de horário escolhido, retornado por 'get_available_slots_next_7_days', deve conter 'start' (horário de início no formato ISO 8601)."},
+                    "lead": {"type": "object", "description": "Um dicionário contendo informações do lead: 'nome', 'email', 'empresa', 'necessidade'."},
                 },
-                "required": ["slot", "lead"]
-            }
-        }
+                "required": ["slot", "lead"],
+            },
+        },
     ]
+    
+@router.post("/message", response_model=AssistantOut)
+async def message_endpoint(payload: UserMessageIn):
+    session = get_session(payload.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired.")
+    
+    add_message(payload.session_id, {"role": "user", "content": payload.message})
+    
+    messages, system_instructions = build_message(session['messages'])
 
-    oai_resp = await openai_service.chat_with_openai(messages=messages, functions=functions)
+    functions = None
 
-    choice = oai_resp.get('choices', [{}])[0]
-    message_obj = choice.get('message', {})
-    content = message_obj.get('content', '')
+    if session['stage'] == "completed":
+        functions = get_gemini_functions_schema()
 
-    function_call = message_obj.get('function_call')
-    actions = []
+    gemini_resp = await ai_service.chat_with_ai(
+        messages=messages,
+        system_instructions=system_instructions,
+        functions=functions
+    )
+    
+    if "info" in gemini_resp:
+        update_lead_info(payload.session_id, gemini_resp["info"])
 
+    if session['stage'] == "completed" and functions is None:
+        gemini_resp = None
+        functions = get_gemini_functions_schema()
+        gemini_resp = await ai_service.chat_with_ai(
+            messages=messages,
+            system_instructions=system_instructions,
+            functions=functions
+        )
 
-    if function_call:
-        fname = function_call.get('name')
-        fargs_raw = function_call.get('arguments')
-        try:
-            fargs = {} if not fargs_raw else (json.loads(fargs_raw) if isinstance(fargs_raw, str) else fargs_raw)
-        except Exception:
-            fargs = {}
+    # executa a orquestração
+    text_content, actions = "", []
+    if functions:
+        text_content, actions = await process_ai_response(payload.session_id, gemini_resp)
 
+    # fallback para estágios não completados
+    if session['stage'] != "completed" and not text_content:
+        text_content = gemini_resp.get("reply", '')
 
-    if fname == 'registrarLead':
-        lead_data = fargs
-        await upsert_lead_db(lead_data)
-        await pipefy_service.create_or_update_card_pipefy(lead_data)
-        actions.append({"action":"registrarLead","status":"ok"})
+    # adiciona resposta final à sessão
+    if text_content:
+        add_message(payload.session_id, {"role": "assistant", "content": text_content})
+
+    if actions:
+        for action in actions:
+            add_message(payload.session_id, {"role": "assistant", "content": f"Action: {action['action']}, Result: {action['result']}"})
         
-        add_message(payload.session_id, {"role": "assistant", "content": "Lead registrado com sucesso."})
-        content = "Obrigado — registrei seus dados. Posso oferecer horários para agendarmos a reunião."
-    elif fname == 'oferecerHorarios':
-        slots = await calendar_service.get_available_slots_next_7_days()
-        offered = slots[:3]
-        actions.append({"action":"oferecerHorarios","slots": offered})
-        content = f"Posso oferecer os seguintes horários: {', '.join([s.get('start_time') for s in offered])}"
-    elif fname == 'agendarReuniao':
-        slot = fargs.get('slot')
-        lead = fargs.get('lead')
-        result = await calendar_service.schedule_meeting(slot, lead)
-        lead['meeting_link'] = result.get('join_url') or result.get('htmlLink') or result.get('meeting_link')
-        lead['meeting_datetime'] = result.get('start_time') or lead.get('meeting_datetime')
-        await upsert_lead_db(lead)
-        await pipefy_service.create_or_update_card_pipefy(lead)
-        actions.append({"action":"agendarReuniao","status":"ok","meeting": result})
-        content = "Reunião agendada com sucesso. Enviarei o link e o horário no card."
+        messages, system_instructions = build_message(session['messages'])
+        gemini_resp = await ai_service.chat_with_ai(
+            messages=messages,
+            system_instructions=system_instructions,
+            functions=None
+        )
+        final_reply = gemini_resp.get("reply", '')
+        if final_reply:
+            add_message(payload.session_id, {"role": "assistant", "content": final_reply})
+            text_content += final_reply
+        return {"reply": text_content, "actions": actions}
+        
 
+    # retorna ao front
+    return {"reply": text_content, "actions": actions}
+    
+async def process_ai_response(session_id: str, gemini_resp: dict):
+    actions = []
+    text_content = ""
+    
+    print(gemini_resp)
 
-    add_message(payload.session_id, {"role": "assistant", "content": content})
+    first_candidate = gemini_resp.candidates[0]
+    content_len = len(first_candidate.content.parts)
+    for i in range(content_len):
+        
+        parts = first_candidate.content.parts[i]
 
-    return {"reply": content, "actions": actions}
+        function_calls = parts.function_call
+        text_content = parts.text or ""
+
+        if function_calls:
+
+        # for call in function_calls:
+           
+            fname = function_calls.name
+            fargs = dict(function_calls.args)
+            function_result = None
+
+            if fname == 'create_or_update_card_pipefy':
+                lead_data = fargs['lead']
+                result = await pipefy_service.create_or_update_card_pipefy(client=None, lead=lead_data)
+                function_result = {"status": "sucesso", "card_id": result.get('card', {}).get('id', 'N/A')}
+                actions.append({"action": fname, "result": result})
+
+            elif fname == 'get_available_slots_next_7_days':
+                slots = await calendar_service.get_available_slots_next_7_days()
+                offered = slots[:3]
+                function_result = {"available_slots": offered}
+                actions.append({"action": fname, "result": offered})
+
+            elif fname == 'schedule_meeting':
+                slot = fargs.get('slot', {})
+                lead = fargs.get('lead', {})
+                result = await calendar_service.schedule_meeting(slot, lead)
+                
+                meeting_link = result['data']['meetingUrl']
+                meeting_datetime = slot.get('time')
+
+                if meeting_link is not None:
+                    lead['meeting_link'] = meeting_link
+                    lead['meeting_datetime'] = meeting_datetime
+                    await pipefy_service.create_or_update_card_pipefy(client=None, lead=lead)
+                
+                    function_result = {"status": "sucesso", "meeting_link": meeting_link, "datetime": meeting_datetime}
+                    actions.append({"action": fname, "result": function_result})
+                else:    
+                    function_result = {"status": "falha", "meeting_link": None, "datetime": None}
+                    actions.append({"action": fname, "result": function_result})
+
+            # function_response = types.Content(
+            #     role="function",
+            #     parts=[types.Part.from_function_response(name=fname, response=function_result)]
+            # )
+            # add_message(session_id, function_response.__dict__)
+
+            # messages_with_results, system_instructions = build_message(get_session(session_id)['messages'])
+            # gemini_resp = await ai_service.chat_with_ai(
+            #     messages=messages_with_results,
+            #     system_instructions=system_instructions,
+            #     functions=get_gemini_functions_schema()
+            # )
+
+    return text_content, actions

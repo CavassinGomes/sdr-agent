@@ -1,6 +1,7 @@
 import httpx
 from datetime import datetime, timedelta
 from config import settings
+import random
 
 BASE_URL = settings.CALENDAR_BASE_URL
 
@@ -9,7 +10,7 @@ async def get_available_slots_next_7_days() -> list:
     end = now + timedelta(days=7)
     async with httpx.AsyncClient() as client:
         r = await client.get(
-            f"{BASE_URL}/slots",
+            f"{BASE_URL}/v1/slots",
             params={
                 "apiKey": settings.CALENDAR_API_KEY,
                 "startTime": now.isoformat(),
@@ -23,8 +24,12 @@ async def get_available_slots_next_7_days() -> list:
         
         if isinstance(slots, dict):
             slots = [slot for day_slots in slots.values() for slot in day_slots]
-
-        return slots
+            
+        if len(slots) <= 3:
+            return slots
+        
+        random.shuffle(slots)
+        return slots[:3]
         # return data.get("slots", [])
 
 
@@ -32,37 +37,34 @@ async def schedule_meeting(slot: dict, lead: dict) -> dict:
     try:
         payload = {
             "eventTypeId": 3758694,
-            "start": slot["start"],
-            "responses": {
+            "start": slot["time"],
+            "attendee": {
                 "name": lead.get("nome"),
                 "email": lead.get("email"),
-                "smsReminderNumber": "",
-                "location": {
-                    "value": "userPhone",
-                    "optionValue": ""
-                }
+                "timeZone": "America/Sao_Paulo",
+                "language": "pt-BR",
             },
-            "timeZone": "America/Sao_Paulo",
-            "language": "pt-BR",
-            "title": f"Reunião entre {lead.get('nome')} e equipe de atendimento",
-            "description": lead.get("necessidade"),
-            "status": "PENDING",
+            "location":{
+                "type": "integration",
+                "integration": "google-meet"  
+            },
             "metadata": {
                 "empresa": lead.get("empresa"),
-                "necessidade": lead.get("necessidade"),
+                "description": lead.get("necessidade"),
             },
         }
-        params = {
-            "apiKey": settings.CALENDAR_API_KEY,
-        }
         
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "cal-api-version": "2024-08-13",
+            "Authorization": f"Bearer {settings.CALENDAR_API_KEY}",
+            
+        }
         async with httpx.AsyncClient() as client:
             r = await client.post(
-                f"{BASE_URL}/bookings",
+                f"{BASE_URL}/v2/bookings",
                 headers=headers,
                 json=payload,
-                params=params
             )
             if r.status_code >= 400:
                 print("\n❌ Erro ao agendar reunião!")
@@ -73,7 +75,6 @@ async def schedule_meeting(slot: dict, lead: dict) -> dict:
                     print("Resposta texto:", r.text)
                 print("Payload enviado:", payload)
                 print("Headers:", headers)
-                print("Params:", params)
 
             r.raise_for_status()
             return r.json()
@@ -87,4 +88,3 @@ async def schedule_meeting(slot: dict, lead: dict) -> dict:
         print(f"💥 Erro inesperado: {e}")
 
     return {}
-
