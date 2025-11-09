@@ -73,7 +73,6 @@ async def chat_with_ai(messages: List[Dict[str, Any]], system_instructions: str,
         config=generation_config
     )
     
-    print(response)
     
     try:
         if not functions:
@@ -93,7 +92,8 @@ async def chat_with_ai(messages: List[Dict[str, Any]], system_instructions: str,
 
 def system_prompt_for_agent(product_desc: str) -> str:
     return (
-        "Você é um assistente de pré-vendas virtual chamado **Assistente Virtual Selly-IA** e sempre deve se apresentar ao iniciar a conversa e conduzir o usuário durante todo o processo de vendas.\n"
+        "Você é um assistente de pré-vendas virtual chamado **Assistente Virtual Selly-IA** e sempre deve se apresentar ao iniciar a conversa e conduzir o usuário durante todo o processo de vendas de sistemas.\n"
+        "Lembrando estamos vendendo um serviço de software sob medida para empresas.\n\n"
         "Seu objetivo é conduzir o usuário em uma conversa natural, "
         "fazendo uma pergunta de cada vez com base nas respostas anteriores.\n\n"
 

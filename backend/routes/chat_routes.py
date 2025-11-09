@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Any, List, Dict
 from utils.session_manager import create_session, get_session, add_message, end_session, update_lead_info
@@ -79,8 +80,8 @@ def get_gemini_functions_schema() -> List[Dict[str, Any]]:
 async def message_endpoint(payload: UserMessageIn):
     session = get_session(payload.session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found or expired.")
-    
+        return JSONResponse(status_code=404, content={"detail": "Session not found or expired."})
+
     add_message(payload.session_id, {"role": "user", "content": payload.message})
     
     messages, system_instructions = build_message(session['messages'])
@@ -145,7 +146,6 @@ async def process_ai_response(session_id: str, gemini_resp: dict):
     actions = []
     text_content = ""
     
-    print(gemini_resp)
 
     first_candidate = gemini_resp.candidates[0]
     content_len = len(first_candidate.content.parts)
