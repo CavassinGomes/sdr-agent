@@ -197,7 +197,7 @@ export default function Home() {
               {msg.role === "user" && (
                 <Avatar>
                   <AvatarFallback>YOU</AvatarFallback>
-                  <AvatarImage src="https://github.com/cavassingomes.png" />
+                  <AvatarImage src="/user-circle-2-svgrepo-com.svg" />
                 </Avatar>
               )}
             </div>

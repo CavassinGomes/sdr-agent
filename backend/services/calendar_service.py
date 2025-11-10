@@ -30,7 +30,6 @@ async def get_available_slots_next_7_days() -> list:
         
         random.shuffle(slots)
         return slots[:3]
-        # return data.get("slots", [])
 
 
 async def schedule_meeting(slot: dict, lead: dict) -> dict:

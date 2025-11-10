@@ -5,6 +5,7 @@ from typing import Any, List, Dict
 from utils.session_manager import create_session, get_session, add_message, end_session, update_lead_info
 from services import ai_service, pipefy_service, calendar_service
 from google.genai import types
+from models.db import add_message_db, create_session_db, update_session_lead_email
 import json
 
 router = APIRouter()
@@ -16,6 +17,7 @@ class StartResponse(BaseModel):
 @router.post("/start-session", response_model=StartResponse)
 async def start_session():
     sid = create_session()
+    await create_session_db(session_id=sid, lead_email="")
     
     init_prompt = ai_service.system_prompt_for_agent("Sistema de CRM e gestão comercial")
     
@@ -23,6 +25,7 @@ async def start_session():
         messages=[{"role": "system", "content": init_prompt}],
         system_instructions=init_prompt
     )
+    await add_message_db(sid, {"role": "assistant", "content": ai_response.get("reply", '')})
     
     return {
         "session_id": sid,
@@ -83,6 +86,7 @@ async def message_endpoint(payload: UserMessageIn):
         return JSONResponse(status_code=404, content={"detail": "Session not found or expired."})
 
     add_message(payload.session_id, {"role": "user", "content": payload.message})
+    await add_message_db(payload.session_id, {"role": "user", "content": payload.message})
     
     messages, system_instructions = build_message(session['messages'])
 
@@ -96,9 +100,12 @@ async def message_endpoint(payload: UserMessageIn):
         system_instructions=system_instructions,
         functions=functions
     )
+    await add_message_db(payload.session_id, {"role": "assistant", "content": gemini_resp.get("reply", '')})
     
     if "info" in gemini_resp:
         update_lead_info(payload.session_id, gemini_resp["info"])
+        if "email" in gemini_resp["info"]:
+            await update_session_lead_email(payload.session_id, gemini_resp["info"]["email"])
 
     if session['stage'] == "completed" and functions is None:
         gemini_resp = None
@@ -108,23 +115,20 @@ async def message_endpoint(payload: UserMessageIn):
             system_instructions=system_instructions,
             functions=functions
         )
+        await add_message_db(payload.session_id, {"role": "assistant", "content": gemini_resp.get("reply", '')})
 
-    # executa a orquestração
     text_content, actions = "", []
     if functions:
         text_content, actions = await process_ai_response(payload.session_id, gemini_resp)
 
-    # fallback para estágios não completados
     if session['stage'] != "completed" and not text_content:
         text_content = gemini_resp.get("reply", '')
 
-    # adiciona resposta final à sessão
-    if text_content:
-        add_message(payload.session_id, {"role": "assistant", "content": text_content})
 
     if actions:
         for action in actions:
             add_message(payload.session_id, {"role": "assistant", "content": f"Action: {action['action']}, Result: {action['result']}"})
+            await add_message_db(payload.session_id, {"role": "assistant", "content": f"Action: {action['action']}, Result: {action['result']}"})
         
         messages, system_instructions = build_message(session['messages'])
         gemini_resp = await ai_service.chat_with_ai(
@@ -135,11 +139,10 @@ async def message_endpoint(payload: UserMessageIn):
         final_reply = gemini_resp.get("reply", '')
         if final_reply:
             add_message(payload.session_id, {"role": "assistant", "content": final_reply})
+            await add_message_db(payload.session_id, {"role": "assistant", "content": gemini_resp.get("reply", '')})
             text_content += final_reply
         return {"reply": text_content, "actions": actions}
         
-
-    # retorna ao front
     return {"reply": text_content, "actions": actions}
     
 async def process_ai_response(session_id: str, gemini_resp: dict):
@@ -158,7 +161,6 @@ async def process_ai_response(session_id: str, gemini_resp: dict):
 
         if function_calls:
 
-        # for call in function_calls:
            
             fname = function_calls.name
             fargs = dict(function_calls.args)
@@ -181,31 +183,19 @@ async def process_ai_response(session_id: str, gemini_resp: dict):
                 lead = fargs.get('lead', {})
                 result = await calendar_service.schedule_meeting(slot, lead)
                 
+                if result['data']['meetingUrl'] is None:
+                    function_result = {"status": "falha", "meeting_link": None, "datetime": None}
+                    actions.append({"action": fname, "result": function_result})
+                    continue
+                
                 meeting_link = result['data']['meetingUrl']
                 meeting_datetime = slot.get('time')
 
-                if meeting_link is not None:
-                    lead['meeting_link'] = meeting_link
-                    lead['meeting_datetime'] = meeting_datetime
-                    await pipefy_service.create_or_update_card_pipefy(client=None, lead=lead)
-                
-                    function_result = {"status": "sucesso", "meeting_link": meeting_link, "datetime": meeting_datetime}
-                    actions.append({"action": fname, "result": function_result})
-                else:    
-                    function_result = {"status": "falha", "meeting_link": None, "datetime": None}
-                    actions.append({"action": fname, "result": function_result})
-
-            # function_response = types.Content(
-            #     role="function",
-            #     parts=[types.Part.from_function_response(name=fname, response=function_result)]
-            # )
-            # add_message(session_id, function_response.__dict__)
-
-            # messages_with_results, system_instructions = build_message(get_session(session_id)['messages'])
-            # gemini_resp = await ai_service.chat_with_ai(
-            #     messages=messages_with_results,
-            #     system_instructions=system_instructions,
-            #     functions=get_gemini_functions_schema()
-            # )
+                lead['meeting_link'] = meeting_link
+                lead['meeting_datetime'] = meeting_datetime
+                await pipefy_service.create_or_update_card_pipefy(client=None, lead=lead)
+            
+                function_result = {"status": "sucesso", "meeting_link": meeting_link, "datetime": meeting_datetime}
+                actions.append({"action": fname, "result": function_result})
 
     return text_content, actions

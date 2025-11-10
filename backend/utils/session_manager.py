@@ -50,8 +50,6 @@ def update_lead_info(session_id: str, info: dict):
     lead = session["lead"]
     stage = session["stage"]
     
-    # 1. Atualiza todos os campos fornecidos, independentemente do stage.
-    # Isso permite que o usuário corrija dados anteriores.
     if "nome" in info:
         lead.nome = info.get("nome")
     if "email" in info:
