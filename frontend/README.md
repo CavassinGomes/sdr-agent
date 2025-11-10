@@ -24,7 +24,6 @@ Este módulo implementa a camada visual do agente SDR, permitindo iniciar e gere
 - [TailwindCSS](https://tailwindcss.com/)
 - [Shadcn/UI](https://ui.shadcn.com/)
 - [Lucide React](https://lucide.dev/)
-- [Framer Motion](https://www.framer.com/motion/) (animações)
 - Comunicação via **Fetch API**
 
 ---
