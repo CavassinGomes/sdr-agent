@@ -12,11 +12,9 @@ def get_db():
         _client = AsyncIOMotorClient(settings.MONGODB_URI)
 
     if _db is None:
-        # se settings.MONGODB_DB existir, use ele
         if hasattr(settings, "MONGODB_DB"):
             _db = _client[settings.MONGODB_DB]
         else:
-            # tenta extrair NOME DO DB da URI
             uri = settings.MONGODB_URI
             parts = uri.rsplit("/", 1)
             if len(parts) == 2 and parts[1]:
