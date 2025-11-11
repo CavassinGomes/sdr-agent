@@ -12,20 +12,13 @@ def get_db():
         _client = AsyncIOMotorClient(settings.MONGODB_URI)
 
     if _db is None:
-        if hasattr(settings, "MONGODB_DB"):
-            _db = _client[settings.MONGODB_DB]
-        else:
-            uri = settings.MONGODB_DB
-            parts = uri.rsplit("/", 1)
-            if len(parts) == 2 and parts[1]:
-                _db = _client[parts[1]]
-            else:
-                raise ValueError(
-                    "Nenhum nome de database encontrado em MONGODB_DB. "
-                    "Adicione MONGODB_DB nas settings."
-                )
+        if not settings.MONGODB_DB:
+            raise ValueError("MONGODB_DB não definido no .env")
+        
+        _db = _client[settings.MONGODB_DB]
 
     return _db
+
 
 
 async def create_session_db(session_id: str, lead_email: str):
