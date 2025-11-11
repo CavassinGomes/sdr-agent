@@ -16,21 +16,25 @@ class StartResponse(BaseModel):
 
 @router.post("/start-session", response_model=StartResponse)
 async def start_session():
-    sid = create_session()
-    await create_session_db(session_id=sid, lead_email="")
-    
-    init_prompt = ai_service.system_prompt_for_agent("Sistema de CRM e gestão comercial")
-    
-    ai_response = await ai_service.chat_with_ai(
-        messages=[{"role": "system", "content": init_prompt}],
-        system_instructions=init_prompt
-    )
-    await add_message_db(sid, {"role": "assistant", "content": ai_response.get("reply", '')})
-    
-    return {
-        "session_id": sid,
-        "messages": ai_response.get("reply", "")
-    }
+    try:
+        sid = create_session()
+        await create_session_db(session_id=sid, lead_email="")
+        
+        init_prompt = ai_service.system_prompt_for_agent("Sistema de CRM e gestão comercial")
+        
+        ai_response = await ai_service.chat_with_ai(
+            messages=[{"role": "system", "content": init_prompt}],
+            system_instructions=init_prompt
+        )
+        await add_message_db(sid, {"role": "assistant", "content": ai_response.get("reply", '')})
+        
+        return {
+            "session_id": sid,
+            "messages": ai_response.get("reply", "")
+        }
+    except Exception as e:
+        print(f"Error in /start-session endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 class UserMessageIn(BaseModel):
     session_id: str
