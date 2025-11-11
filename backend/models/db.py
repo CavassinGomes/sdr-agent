@@ -9,19 +9,19 @@ def get_db():
     global _client, _db
 
     if _client is None:
-        _client = AsyncIOMotorClient(settings.MONGODB_URI)
+        _client = AsyncIOMotorClient(settings.MONGODB_DB)
 
     if _db is None:
         if hasattr(settings, "MONGODB_DB"):
             _db = _client[settings.MONGODB_DB]
         else:
-            uri = settings.MONGODB_URI
+            uri = settings.MONGODB_DB
             parts = uri.rsplit("/", 1)
             if len(parts) == 2 and parts[1]:
                 _db = _client[parts[1]]
             else:
                 raise ValueError(
-                    "Nenhum nome de database encontrado em MONGODB_URI. "
+                    "Nenhum nome de database encontrado em MONGODB_DB. "
                     "Adicione MONGODB_DB nas settings."
                 )
 
