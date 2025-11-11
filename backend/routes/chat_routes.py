@@ -81,70 +81,73 @@ def get_gemini_functions_schema() -> List[Dict[str, Any]]:
     
 @router.post("/message", response_model=AssistantOut)
 async def message_endpoint(payload: UserMessageIn):
-    print("Received message payload:", payload)
-    session = get_session(payload.session_id)
-    if not session:
-        return JSONResponse(status_code=404, content={"detail": "Session not found or expired."})
+    try:
+        session = get_session(payload.session_id)
+        if not session:
+            return JSONResponse(status_code=404, content={"detail": "Session not found or expired."})
 
-    add_message(payload.session_id, {"role": "user", "content": payload.message})
-    await add_message_db(payload.session_id, {"role": "user", "content": payload.message})
-    
-    messages, system_instructions = build_message(session['messages'])
+        add_message(payload.session_id, {"role": "user", "content": payload.message})
+        await add_message_db(payload.session_id, {"role": "user", "content": payload.message})
+        
+        messages, system_instructions = build_message(session['messages'])
 
-    functions = None
+        functions = None
 
-    if session['stage'] == "completed":
-        functions = get_gemini_functions_schema()
+        if session['stage'] == "completed":
+            functions = get_gemini_functions_schema()
 
-    gemini_resp = await ai_service.chat_with_ai(
-        messages=messages,
-        system_instructions=system_instructions,
-        functions=functions
-    )
-    await add_message_db(payload.session_id, {"role": "assistant", "content": gemini_resp.get("reply", '')})
-    
-    if "info" in gemini_resp:
-        update_lead_info(payload.session_id, gemini_resp["info"])
-        if "email" in gemini_resp["info"]:
-            await update_session_lead_email(payload.session_id, gemini_resp["info"]["email"])
-
-    if session['stage'] == "completed" and functions is None:
-        gemini_resp = None
-        functions = get_gemini_functions_schema()
         gemini_resp = await ai_service.chat_with_ai(
             messages=messages,
             system_instructions=system_instructions,
             functions=functions
         )
         await add_message_db(payload.session_id, {"role": "assistant", "content": gemini_resp.get("reply", '')})
-
-    text_content, actions = "", []
-    if functions != None:
-        text_content, actions = await process_ai_response(payload.session_id, gemini_resp)
-
-    if session['stage'] != "completed" and not text_content:
-        text_content = gemini_resp.get("reply", '')
-
-
-    if actions:
-        for action in actions:
-            add_message(payload.session_id, {"role": "assistant", "content": f"Action: {action['action']}, Result: {action['result']}"})
-            await add_message_db(payload.session_id, {"role": "assistant", "content": f"Action: {action['action']}, Result: {action['result']}"})
         
-        messages, system_instructions = build_message(session['messages'])
-        gemini_resp = await ai_service.chat_with_ai(
-            messages=messages,
-            system_instructions=system_instructions,
-            functions=None
-        )
-        final_reply = gemini_resp.get("reply", '')
-        if final_reply:
-            add_message(payload.session_id, {"role": "assistant", "content": final_reply})
+        if "info" in gemini_resp:
+            update_lead_info(payload.session_id, gemini_resp["info"])
+            if "email" in gemini_resp["info"]:
+                await update_session_lead_email(payload.session_id, gemini_resp["info"]["email"])
+
+        if session['stage'] == "completed" and functions is None:
+            gemini_resp = None
+            functions = get_gemini_functions_schema()
+            gemini_resp = await ai_service.chat_with_ai(
+                messages=messages,
+                system_instructions=system_instructions,
+                functions=functions
+            )
             await add_message_db(payload.session_id, {"role": "assistant", "content": gemini_resp.get("reply", '')})
-            text_content += final_reply
+
+        text_content, actions = "", []
+        if functions != None:
+            text_content, actions = await process_ai_response(payload.session_id, gemini_resp)
+
+        if session['stage'] != "completed" and not text_content:
+            text_content = gemini_resp.get("reply", '')
+
+
+        if actions:
+            for action in actions:
+                add_message(payload.session_id, {"role": "assistant", "content": f"Action: {action['action']}, Result: {action['result']}"})
+                await add_message_db(payload.session_id, {"role": "assistant", "content": f"Action: {action['action']}, Result: {action['result']}"})
+            
+            messages, system_instructions = build_message(session['messages'])
+            gemini_resp = await ai_service.chat_with_ai(
+                messages=messages,
+                system_instructions=system_instructions,
+                functions=None
+            )
+            final_reply = gemini_resp.get("reply", '')
+            if final_reply:
+                add_message(payload.session_id, {"role": "assistant", "content": final_reply})
+                await add_message_db(payload.session_id, {"role": "assistant", "content": gemini_resp.get("reply", '')})
+                text_content += final_reply
+            return {"reply": text_content, "actions": actions}
+            
         return {"reply": text_content, "actions": actions}
-        
-    return {"reply": text_content, "actions": actions}
+    except Exception as e:
+        print(f"Error in /message endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     
 async def process_ai_response(session_id: str, gemini_resp: dict):
     actions = []
