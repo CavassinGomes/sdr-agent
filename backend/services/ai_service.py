@@ -6,6 +6,8 @@ from config import settings
 import re
 import json
 
+CLIENT = genai.Client(api_key=settings.AI_API_KEY)
+
 RESPONSE_SCHEMA = types.Schema(
     type=types.Type.OBJECT,
     properties={
@@ -30,8 +32,7 @@ RESPONSE_SCHEMA = types.Schema(
 )
 
 async def chat_with_ai(messages: List[Dict[str, Any]], system_instructions: str, functions: List[Dict[str, Any]] | None = None) -> Dict[str, Any]:
-    client = genai.Client(api_key=settings.AI_API_KEY)
-    aclient = client.aio
+    aclient = CLIENT.aio
     
     contents = []
     
