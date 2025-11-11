@@ -81,6 +81,7 @@ def get_gemini_functions_schema() -> List[Dict[str, Any]]:
     
 @router.post("/message", response_model=AssistantOut)
 async def message_endpoint(payload: UserMessageIn):
+    print("Received message payload:", payload)
     session = get_session(payload.session_id)
     if not session:
         return JSONResponse(status_code=404, content={"detail": "Session not found or expired."})
