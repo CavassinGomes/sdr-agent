@@ -118,7 +118,7 @@ async def message_endpoint(payload: UserMessageIn):
         await add_message_db(payload.session_id, {"role": "assistant", "content": gemini_resp.get("reply", '')})
 
     text_content, actions = "", []
-    if functions:
+    if functions != None:
         text_content, actions = await process_ai_response(payload.session_id, gemini_resp)
 
     if session['stage'] != "completed" and not text_content:
@@ -148,6 +148,22 @@ async def message_endpoint(payload: UserMessageIn):
 async def process_ai_response(session_id: str, gemini_resp: dict):
     actions = []
     text_content = ""
+    
+    if isinstance(gemini_resp, dict):
+        return gemini_resp.get("reply", ""), []
+
+    if not hasattr(gemini_resp, "candidates") or not gemini_resp.candidates:
+        return gemini_resp.get("reply", ""), []
+
+    first_candidate = gemini_resp.candidates[0]
+
+    if (
+        not hasattr(first_candidate, "content") 
+        or not hasattr(first_candidate.content, "parts") 
+        or not first_candidate.content.parts
+    ):
+        return gemini_resp.get("reply", ""), []
+
     
 
     first_candidate = gemini_resp.candidates[0]
