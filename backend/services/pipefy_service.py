@@ -11,40 +11,40 @@ HEADERS = {
 PIPEFY_URL = settings.PIPEFY_API_URL
 
 async def find_card_by_email(email: str) -> str | None:
-    client = httpx.AsyncClient()
-    query = {
-        "query": """
-            query FindCards($pipe_id: ID!, $email: String!) {
-                findCards(pipeId: $pipe_id, search: {fieldId: "email", fieldValue: $email}){
-                    edges{
-                        node{
-                            id
-                            fields{
-                                name,
-                                value
+    async with httpx.AsyncClient() as client:
+        query = {
+            "query": """
+                query FindCards($pipe_id: ID!, $email: String!) {
+                    findCards(pipeId: $pipe_id, search: {fieldId: "email", fieldValue: $email}){
+                        edges{
+                            node{
+                                id
+                                fields{
+                                    name,
+                                    value
+                                }
                             }
                         }
                     }
                 }
-            }
-                
-        """,
-        "variables": {
-            "pipe_id": settings.PIPEFY_PIPE_ID,
-            "email": email,
-        },
-    }
+                    
+            """,
+            "variables": {
+                "pipe_id": settings.PIPEFY_PIPE_ID,
+                "email": email,
+            },
+        }
 
-    response = await client.post(PIPEFY_URL, headers=HEADERS, json=query)
-    data = response.json()
+        response = await client.post(PIPEFY_URL, headers=HEADERS, json=query)
+        data = response.json()
 
-    if "data" in data and data["data"]["findCards"] and data["data"]["findCards"]["edges"]:
-        edges = data["data"]["findCards"]["edges"]
-        for edge in edges:
-            card = edge["node"]
-            return {"id": card["id"], "fields": card["fields"]}
-    
-    return {"error": "Card not found"}
+        if "data" in data and data["data"]["findCards"] and data["data"]["findCards"]["edges"]:
+            edges = data["data"]["findCards"]["edges"]
+            for edge in edges:
+                card = edge["node"]
+                return {"id": card["id"], "fields": card["fields"]}
+        
+        return {"error": "Card not found"}
 
 async def update_card(client: httpx.AsyncClient, card_id: str, fields_to_update: List[Dict[str, str]]) -> dict:
     
