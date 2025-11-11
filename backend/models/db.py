@@ -9,7 +9,7 @@ def get_db():
     global _client, _db
 
     if _client is None:
-        _client = AsyncIOMotorClient(settings.MONGODB_DB)
+        _client = AsyncIOMotorClient(settings.MONGODB_URI)
 
     if _db is None:
         if hasattr(settings, "MONGODB_DB"):
